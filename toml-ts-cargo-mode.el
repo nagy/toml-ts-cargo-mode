@@ -16,9 +16,9 @@
 ;;     page for the crate whose dependency key is under point.
 ;;
 ;;   - Underline highlighting: dependency keys are underlined during
-;;     font-lock by applying `font-lock-face' via
-;;     `font-lock-append-text-property' inside a wrapper around
-;;     `font-lock-fontify-region-function'.
+;;     font-lock by registering custom `treesit-font-lock-rules' with
+;;     a function capture that checks whether the pair is inside a
+;;     configured dependency table.
 ;;
 ;; Usage:
 ;;     (add-hook 'toml-ts-mode-hook
@@ -60,49 +60,8 @@ Only exact (non-dotted) table names match."
   "Face for crate dependency keys."
   :group 'toml-ts-cargo)
 
-(defvar-local toml-ts-cargo--saved-fontify-function nil
-  "Saved original `font-lock-fontify-region-function'.")
 
-
-;;;###autoload
-(define-minor-mode toml-ts-cargo-mode
-  "Minor mode for Cargo.toml enhancements in `toml-ts-mode' buffers."
-  :lighter " Cargo"
-  (if toml-ts-cargo-mode
-      (toml-ts-cargo--enable)
-    (toml-ts-cargo--disable)))
-
-(defun toml-ts-cargo--enable ()
-  "Register URL provider and font-lock wrapper."
-  (setq-local thing-at-point-provider-alist
-              (cons '(url . toml-ts-cargo--url-provider)
-                    thing-at-point-provider-alist))
-  (when toml-ts-cargo-highlight-dependencies
-    (setq-local toml-ts-cargo--saved-fontify-function
-                font-lock-fontify-region-function)
-    (setq-local font-lock-fontify-region-function
-                #'toml-ts-cargo--fontify-region-wrapper)))
-
-(defun toml-ts-cargo--disable ()
-  "Unregister URL provider and restore original font-lock function."
-  (setq-local thing-at-point-provider-alist
-              (assq-delete-all 'url thing-at-point-provider-alist))
-  (when toml-ts-cargo--saved-fontify-function
-    (setq-local font-lock-fontify-region-function
-                toml-ts-cargo--saved-fontify-function)
-    (kill-local-variable 'toml-ts-cargo--saved-fontify-function)
-    ;; Re-fontify with the restored (original) function to clear
-    ;; our underline faces.
-    (font-lock-flush)
-    (font-lock-ensure)))
-
-(defun toml-ts-cargo--fontify-region-wrapper (beg end loudly)
-  "Fontify BEG..END: treesit pass first, then our underline pass."
-  (funcall toml-ts-cargo--saved-fontify-function beg end loudly)
-  (toml-ts-cargo--fontify-dependency-keys beg end))
-
-
-;;; Tree-sitter helpers (shared between URL provider and fontify pass)
+;;; Tree-sitter helpers (shared between URL provider and font-lock rules)
 
 (defun toml-ts-cargo--strip-quotes (string)
   "Strip surrounding double or single quotes from STRING."
@@ -174,6 +133,38 @@ Returns nil for pairs inside inline_tables."
    t))
 
 
+;;; Font-lock function capture
+
+(defun toml-ts-cargo--fontify-key (node override start end)
+  "Fontify NODE with `toml-ts-cargo-dependency-key-face' if inside a
+dependency table.  NODE is the captured key node.  OVERRIDE, START,
+and END are passed by the treesit font-lock engine."
+  (when (toml-ts-cargo--in-dependency-table-p node)
+    (treesit-fontify-with-override
+     (treesit-node-start node) (treesit-node-end node)
+     'toml-ts-cargo-dependency-key-face
+     override start end)))
+
+
+;;; Treesit font-lock rules
+
+(defvar toml-ts-cargo--font-lock-rules
+  (treesit-font-lock-rules
+   :language 'toml
+   :override t
+   :feature 'cargo-dependency
+   ;; Pairs directly inside tables or table-array-elements (not inline_tables).
+   ;; The capture name matches the function above, not a face – Emacs
+   ;; falls back to calling it as (node override start end).
+   '((table (pair (bare_key) @toml-ts-cargo--fontify-key))
+     (table (pair (quoted_key) @toml-ts-cargo--fontify-key))
+     (table (pair (dotted_key) @toml-ts-cargo--fontify-key))
+     (table_array_element (pair (bare_key) @toml-ts-cargo--fontify-key))
+     (table_array_element (pair (quoted_key) @toml-ts-cargo--fontify-key))
+     (table_array_element (pair (dotted_key) @toml-ts-cargo--fontify-key))))
+  "Treesit font-lock rules for Cargo.toml dependency-key highlighting.")
+
+
 ;;; URL provider
 
 (defun toml-ts-cargo--url-provider ()
@@ -189,40 +180,69 @@ Returns nil for pairs inside inline_tables."
             (format toml-ts-cargo-crate-url-template crate-name)))))))
 
 
-;;; Font-lock underline pass
+;;; Minor mode
 
-(defun toml-ts-cargo--fontify-dependency-keys (beg end)
-  "Add underline face to dependency keys between BEG and END.
-Called from the font-lock wrapper after treesit fontification.
-Uses `font-lock-append-text-property' to add our face after
-existing `font-lock-face' properties so our :underline wins.
-because `inhibit-modification-hooks' is t at that point."
-  (save-excursion
-    (goto-char beg)
-    (while (< (point) end)
-      (if-let* ((node (treesit-node-at (point)))
-                (pair (toml-ts-cargo--find-table-pair node))
-                ((toml-ts-cargo--in-dependency-table-p pair))
-                (key-node (toml-ts-cargo--pair-key-node pair)))
-          (let ((kstart (treesit-node-start key-node))
-                (kend   (treesit-node-end key-node))
-                (pair-end (treesit-node-end pair)))
-            (if (and kstart kend (> kend (point)))
-                ;; Fresh key: apply underline and skip past it.
-                (progn
-                  (font-lock-append-text-property
-                   kstart kend
-                   'font-lock-face
-                   'toml-ts-cargo-dependency-key-face)
-                  (if pair-end
-                      (goto-char pair-end)
-                    (goto-char kend)))
-              ;; Already past this key: skip the whole pair.
-              (if pair-end
-                  (goto-char pair-end)
-                (forward-char 1))))
-        ;; Not on a dependency pair: advance one char.
-        (forward-char 1)))))
+;;;###autoload
+(define-minor-mode toml-ts-cargo-mode
+  "Minor mode for Cargo.toml enhancements in `toml-ts-mode' buffers."
+  :lighter " Cargo"
+  (if toml-ts-cargo-mode
+      (toml-ts-cargo--enable)
+    (toml-ts-cargo--disable)))
+
+(defun toml-ts-cargo--enable ()
+  "Register URL provider and treesit font-lock rules."
+  ;; URL provider
+  (setq-local thing-at-point-provider-alist
+              (cons '(url . toml-ts-cargo--url-provider)
+                    thing-at-point-provider-alist))
+  ;; Treesit font-lock rules
+  (when toml-ts-cargo-highlight-dependencies
+    (unless (toml-ts-cargo--feature-registered-p)
+      ;; Append our rules to the buffer-local font-lock settings.
+      (setq-local treesit-font-lock-settings
+                  (append treesit-font-lock-settings
+                          toml-ts-cargo--font-lock-rules))
+      ;; Register our feature so Emacs activates it at level 1+.
+      (setq-local treesit-font-lock-feature-list
+                  (cons (cons 'cargo-dependency
+                              (car treesit-font-lock-feature-list))
+                        (cdr treesit-font-lock-feature-list)))
+      ;; Recompute and re-fontify.
+      (treesit-font-lock-recompute-features)
+      (font-lock-flush)
+      (font-lock-ensure))))
+
+(defun toml-ts-cargo--disable ()
+  "Unregister URL provider and treesit font-lock rules."
+  ;; URL provider
+  (setq-local thing-at-point-provider-alist
+              (assq-delete-all 'url thing-at-point-provider-alist))
+  ;; Treesit font-lock rules
+  (when toml-ts-cargo-highlight-dependencies
+    ;; Remove our rules from settings.
+    (let ((new-settings nil))
+      (dolist (setting treesit-font-lock-settings)
+        (unless (eq (plist-get (cdr setting) :feature) 'cargo-dependency)
+          (push setting new-settings)))
+      (setq-local treesit-font-lock-settings (nreverse new-settings)))
+    ;; Remove our feature from each decoration level.
+    (let ((new-features nil))
+      (dolist (level treesit-font-lock-feature-list)
+        (push (assq-delete-all 'cargo-dependency level) new-features))
+      (setq-local treesit-font-lock-feature-list (nreverse new-features)))
+    ;; Recompute and re-fontify (clears our faces).
+    (treesit-font-lock-recompute-features)
+    (font-lock-flush)
+    (font-lock-ensure)))
+
+(defun toml-ts-cargo--feature-registered-p ()
+  "Return non-nil if the `cargo-dependency' feature is already registered."
+  (catch 'found
+    (dolist (level treesit-font-lock-feature-list)
+      (when (assq 'cargo-dependency level)
+        (throw 'found t)))
+    nil))
 
 (provide 'toml-ts-cargo-mode)
 ;;; toml-ts-cargo-mode.el ends here
