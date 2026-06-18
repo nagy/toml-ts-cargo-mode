@@ -2,10 +2,10 @@
 
 ;; Copyright (C) 2026
 
-;; Author: TOML TS Cargo Mode Maintainers
+;; Author: Daniel Nagy
 ;; Version: 0.1.0
 ;; Keywords: languages, tools
-;; Package-Requires: ((emacs "29.1"))
+;; Package-Requires: ((emacs "30.1"))
 
 ;;; Commentary:
 
@@ -44,7 +44,7 @@
   :group 'toml-ts-cargo)
 
 (defcustom toml-ts-cargo-dependency-tables
-  '("dependencies")
+  '("dependencies" "build-dependencies")
   "List of TOML table names that contain crate-level dependencies.
 Only exact (non-dotted) table names match."
   :type '(repeat string)
@@ -172,12 +172,11 @@ and END are passed by the treesit font-lock engine."
   (when (and toml-ts-cargo-mode
              (derived-mode-p 'toml-ts-mode)
              (treesit-ready-p 'toml t))
-    (let ((node (treesit-node-at (point))))
-      (when node
-        (when-let* ((pair (toml-ts-cargo--find-table-pair node))
-                    (crate-name (toml-ts-cargo--pair-key-name pair)))
-          (when (toml-ts-cargo--in-dependency-table-p pair)
-            (format toml-ts-cargo-crate-url-template crate-name)))))))
+    (when-let* ((node (treesit-node-at (point)))
+                (pair (toml-ts-cargo--find-table-pair node))
+                (crate-name (toml-ts-cargo--pair-key-name pair)))
+      (when (toml-ts-cargo--in-dependency-table-p pair)
+        (format toml-ts-cargo-crate-url-template crate-name)))))
 
 
 ;;; Minor mode
