@@ -25,6 +25,7 @@
 
 (require 'toml-ts-cargo-mode)
 (require 'ert)
+(require 'cl-lib)
 
 ;;; Helper: create a toml-ts-mode buffer with content and return it.
 (defun toml-ts-cargo-test--with-cargo-buffer (content)
@@ -180,6 +181,40 @@ value node up to the enclosing pair."
       ;; Disable and verify no URL detection
       (toml-ts-cargo-mode -1)
       (should-not (thing-at-point 'url)))
+    (kill-buffer buf)))
+
+
+(ert-deftest toml-ts-cargo-browse-at-point ()
+  "Pressing RET on a dependency key should call browse-url with the crates.io URL."
+  (skip-unless (treesit-ready-p 'toml))
+  (let ((browse-url-called nil)
+        (browse-url-arg nil))
+    (cl-letf (((symbol-function 'browse-url)
+               (lambda (url)
+                 (setq browse-url-called t
+                       browse-url-arg url))))
+      (let ((buf (toml-ts-cargo-test--with-cargo-buffer
+                  "[dependencies]\nbase64 = \"0.22\"\n")))
+        (with-current-buffer buf
+          (goto-char (point-min))
+          (search-forward "base64")
+          (goto-char (match-beginning 0))
+          (toml-ts-cargo-browse-at-point)
+          (should browse-url-called)
+          (should (equal browse-url-arg
+                         "https://crates.io/crates/base64")))
+        (kill-buffer buf)))))
+
+(ert-deftest toml-ts-cargo-browse-at-point-no-crate ()
+  "Pressing RET on non-crate text should signal an error."
+  (skip-unless (treesit-ready-p 'toml))
+  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
+              "[package]\nname = \"my-crate\"\n")))
+    (with-current-buffer buf
+      (goto-char (point-min))
+      (search-forward "name")
+      (goto-char (match-beginning 0))
+      (should-error (toml-ts-cargo-browse-at-point)))
     (kill-buffer buf)))
 
 (provide 'toml-ts-cargo-mode-tests)

@@ -180,10 +180,27 @@ Returns nil for pairs inside inline_tables."
 
 ;;; Minor mode
 
+(defvar-keymap toml-ts-cargo-mode-map
+  :doc "Keymap for `toml-ts-cargo-mode'."
+  "RET" #'toml-ts-cargo-browse-at-point)
+
+(defun toml-ts-cargo-browse-at-point ()
+  "Open the crates.io URL for the crate dependency at point in a browser."
+  (interactive)
+  (if-let* ((url (thing-at-point 'url)))
+      (browse-url url)
+    (user-error "No crate URL at point")))
+
 ;;;###autoload
 (define-minor-mode toml-ts-cargo-mode
-  "Minor mode for Cargo.toml enhancements in `toml-ts-mode' buffers."
+  "Minor mode for Cargo.toml enhancements in `toml-ts-mode' buffers.
+
+When enabled, this mode:
+  - Underlines dependency keys in configured dependency tables.
+  - Makes `thing-at-point' return crates.io URLs for those keys.
+  - Pressing RET on a dependency key opens it on crates.io."
   :lighter " Cargo"
+  :keymap toml-ts-cargo-mode-map
   (if toml-ts-cargo-mode
       (toml-ts-cargo--enable)
     (toml-ts-cargo--disable)))
