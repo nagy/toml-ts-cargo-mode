@@ -132,24 +132,17 @@ value node up to the enclosing pair."
     (kill-buffer buf)))
 
 (ert-deftest toml-ts-cargo-url-dev-dependencies ()
-  "When dev-dependencies is configured, it should also work."
+  "URL detection works in dev-dependencies tables."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((toml-ts-cargo-dependency-tables
-         '("dependencies" "dev-dependencies")))
-    (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-                "[dev-dependencies]\ntest-crate = \"0.5\"\n")))
-      (with-current-buffer buf
-        (setq-local toml-ts-cargo-dependency-tables
-                    '("dependencies" "dev-dependencies"))
-        ;; Re-register since we changed the table list
-        (toml-ts-cargo--disable)
-        (toml-ts-cargo--enable)
-        (goto-char (point-min))
-        (search-forward "test-crate")
-        (goto-char (match-beginning 0))
-        (should (equal (thing-at-point 'url)
-                       "https://crates.io/crates/test-crate")))
-      (kill-buffer buf))))
+  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
+              "[dev-dependencies]\ntest-crate = \"0.5\"\n")))
+    (with-current-buffer buf
+      (goto-char (point-min))
+      (search-forward "test-crate")
+      (goto-char (match-beginning 0))
+      (should (equal (thing-at-point 'url)
+                     "https://crates.io/crates/test-crate")))
+    (kill-buffer buf)))
 
 (ert-deftest toml-ts-cargo-url-custom-template ()
   "Custom URL template should be respected."

@@ -29,8 +29,9 @@
 ;;   - URL detection: `thing-at-point' for 'url returns the crates.io
 ;;     page for the crate whose dependency key is under point.
 ;;
-;;   - Underline highlighting: dependency keys are underlined during
-;;     font-lock via treesit queries with `:pred?' predicates.
+;;   - Underline highlighting: dependency keys inside known dependency
+;;     tables are underlined via treesit queries with `:match?'
+;;     predicates.
 ;;
 ;; Usage:
 ;;     (add-hook 'toml-ts-mode-hook
@@ -52,13 +53,6 @@
   "https://crates.io/crates/%s"
   "URL template for crate dependencies."
   :type 'string
-  :group 'toml-ts-cargo)
-
-(defcustom toml-ts-cargo-dependency-tables
-  '("dependencies" "build-dependencies")
-  "List of TOML table names that contain crate-level dependencies.
-Only exact (non-dotted) table names match."
-  :type '(repeat string)
   :group 'toml-ts-cargo)
 
 (defcustom toml-ts-cargo-highlight-dependencies t
@@ -112,16 +106,6 @@ Returns nil for pairs inside inline_tables."
    t))
 
 
-;;; Font-lock predicate
-
-(defun toml-ts-cargo--dependency-table-p (key-node)
-  "Return non-nil if KEY-NODE's text is in `toml-ts-cargo-dependency-tables'."
-  (let ((text (treesit-node-text key-node)))
-    (when (equal (treesit-node-type key-node) "quoted_key")
-      (setq text (toml-ts-cargo--strip-quotes text)))
-    (member text toml-ts-cargo-dependency-tables)))
-
-
 ;;; Treesit font-lock rules
 
 (defvar toml-ts-cargo--font-lock-rules
@@ -132,33 +116,43 @@ Returns nil for pairs inside inline_tables."
    '((table
       [(bare_key) (quoted_key)] @_table-key
       (pair (bare_key) @toml-ts-cargo-dependency-key-face)
-      (:pred? toml-ts-cargo--dependency-table-p @_table-key))
+      (:match? @_table-key
+       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))
      (table
       [(bare_key) (quoted_key)] @_table-key
       (pair (quoted_key) @toml-ts-cargo-dependency-key-face)
-      (:pred? toml-ts-cargo--dependency-table-p @_table-key))
+      (:match? @_table-key
+       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))
      (table
       [(bare_key) (quoted_key)] @_table-key
       (pair (dotted_key) @toml-ts-cargo-dependency-key-face)
-      (:pred? toml-ts-cargo--dependency-table-p @_table-key))
+      (:match? @_table-key
+       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))
      (table_array_element
       [(bare_key) (quoted_key)] @_table-key
       (pair (bare_key) @toml-ts-cargo-dependency-key-face)
-      (:pred? toml-ts-cargo--dependency-table-p @_table-key))
+      (:match? @_table-key
+       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))
      (table_array_element
       [(bare_key) (quoted_key)] @_table-key
       (pair (quoted_key) @toml-ts-cargo-dependency-key-face)
-      (:pred? toml-ts-cargo--dependency-table-p @_table-key))
+      (:match? @_table-key
+       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))
      (table_array_element
       [(bare_key) (quoted_key)] @_table-key
       (pair (dotted_key) @toml-ts-cargo-dependency-key-face)
-      (:pred? toml-ts-cargo--dependency-table-p @_table-key))))
+      (:match? @_table-key
+       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))))
   "Treesit font-lock rules for Cargo.toml dependency-key highlighting.")
 
 
 ;;; URL provider
 
 (defvar toml-ts-cargo-mode)
+
+(defconst toml-ts-cargo--dependency-table-names
+  '("dependencies" "dev-dependencies" "build-dependencies")
+  "Cargo.toml table names that contain crate-level dependencies.")
 
 (defun toml-ts-cargo--url-provider ()
   "Return a crates.io URL if point is on a dependency key."
@@ -172,7 +166,7 @@ Returns nil for pairs inside inline_tables."
                 ((member (treesit-node-type header)
                          '("bare_key" "quoted_key")))
                 (header-text (toml-ts-cargo--key-text header))
-                ((member header-text toml-ts-cargo-dependency-tables))
+                ((member header-text toml-ts-cargo--dependency-table-names))
                 (key-node (treesit-node-child pair 0 t))
                 (crate-name (and key-node (toml-ts-cargo--key-text key-node))))
       (format toml-ts-cargo-crate-url-template crate-name))))
@@ -196,7 +190,8 @@ Returns nil for pairs inside inline_tables."
   "Minor mode for Cargo.toml enhancements in `toml-ts-mode' buffers.
 
 When enabled, this mode:
-  - Underlines dependency keys in configured dependency tables.
+  - Underlines dependency keys in dependencies, dev-dependencies and
+    build-dependencies tables.
   - Makes `thing-at-point' return crates.io URLs for those keys.
   - Pressing RET on a dependency key opens it on crates.io."
   :lighter " Cargo"
