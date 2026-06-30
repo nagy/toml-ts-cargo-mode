@@ -43,6 +43,7 @@
 
 (require 'toml-ts-mode)
 (require 'thingatpt)
+(eval-when-compile (require 'rx))
 
 (defgroup toml-ts-cargo nil
   "Cargo.toml support for `toml-ts-mode'."
@@ -64,6 +65,14 @@
   '((t :underline t))
   "Face for crate dependency keys."
   :group 'toml-ts-cargo)
+
+(defconst toml-ts-cargo--dependency-table-names
+  '("dependencies" "dev-dependencies" "build-dependencies")
+  "Cargo.toml table names that contain crate-level dependencies.")
+
+(defconst toml-ts-cargo--dependency-table-re
+  (rx-to-string `(seq bos (or ,@toml-ts-cargo--dependency-table-names) eos))
+  "Regexp matching `toml-ts-cargo--dependency-table-names'.")
 
 
 ;;; Tree-sitter helpers
@@ -113,46 +122,36 @@ Returns nil for pairs inside inline_tables."
    :language 'toml
    :override t
    :feature 'cargo-dependency
-   '((table
+   `((table
       [(bare_key) (quoted_key)] @_table-key
       (pair (bare_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key
-       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))
+      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))
      (table
       [(bare_key) (quoted_key)] @_table-key
       (pair (quoted_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key
-       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))
+      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))
      (table
       [(bare_key) (quoted_key)] @_table-key
       (pair (dotted_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key
-       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))
+      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))
      (table_array_element
       [(bare_key) (quoted_key)] @_table-key
       (pair (bare_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key
-       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))
+      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))
      (table_array_element
       [(bare_key) (quoted_key)] @_table-key
       (pair (quoted_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key
-       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))
+      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))
      (table_array_element
       [(bare_key) (quoted_key)] @_table-key
       (pair (dotted_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key
-       "^\\(dependencies\\|dev-dependencies\\|build-dependencies\\)$"))))
+      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))))
   "Treesit font-lock rules for Cargo.toml dependency-key highlighting.")
 
 
 ;;; URL provider
 
 (defvar toml-ts-cargo-mode)
-
-(defconst toml-ts-cargo--dependency-table-names
-  '("dependencies" "dev-dependencies" "build-dependencies")
-  "Cargo.toml table names that contain crate-level dependencies.")
 
 (defun toml-ts-cargo--url-provider ()
   "Return a crates.io URL if point is on a dependency key."
