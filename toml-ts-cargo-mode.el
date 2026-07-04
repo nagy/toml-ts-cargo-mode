@@ -62,7 +62,7 @@
   :group 'toml-ts-cargo)
 
 (defface toml-ts-cargo-dependency-key-face
-  '((t :underline t))
+  '((t :underline t :inherit (font-lock-property-use-face)))
   "Face for crate dependency keys."
   :group 'toml-ts-cargo)
 
