@@ -27,188 +27,225 @@
 (require 'ert)
 (require 'cl-lib)
 
-;;; Helper: create a toml-ts-mode buffer with content and return it.
-(defun toml-ts-cargo-test--with-cargo-buffer (content)
-  "Create a temporary `toml-ts-mode' buffer with CONTENT.
-Enables `toml-ts-cargo-mode', moves point to the beginning, and
-returns the buffer."
-  (let ((buf (generate-new-buffer " *toml-ts-cargo-test*")))
-    (with-current-buffer buf
-      (toml-ts-mode)
-      (insert content)
-      (goto-char (point-min))
-      (toml-ts-cargo-mode 1)
-      (setq buffer-file-name "/tmp/Cargo.toml"))
-    buf))
+;;; Helpers
 
-;;; Tests
+(defmacro toml-ts-cargo-test--with-cargo-buffer (content &rest body)
+  "Create a temporary `toml-ts-mode' buffer with CONTENT and run BODY.
+Enables `toml-ts-cargo-mode' and cleans up afterwards."
+  (declare (indent 1))
+  `(let ((buf (generate-new-buffer " *toml-ts-cargo-test*")))
+     (with-current-buffer buf
+       (toml-ts-mode)
+       (insert ,content)
+       (goto-char (point-min))
+       (toml-ts-cargo-mode 1)
+       (setq buffer-file-name "/tmp/Cargo.toml"))
+     (unwind-protect
+         (with-current-buffer buf ,@body)
+       (kill-buffer buf))))
+
+(defun toml-ts-cargo-test--url-at (text)
+  "Return `thing-at-point' for 'url at the first occurrence of TEXT."
+  (goto-char (point-min))
+  (search-forward text)
+  (goto-char (match-beginning 0))
+  (thing-at-point 'url))
+
+;;; URL detection — basic
 
 (ert-deftest toml-ts-cargo-url-at-dependency-key ()
-  "Test URL detection when point is on a bare dependency key."
+  "URL detection works on bare dependency keys."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-              "[dependencies]\nbase64 = \"0.22\"\nevents = \"1\"\n")))
-    (with-current-buffer buf
-      ;; Point on 'base64'
-      (goto-char (point-min))
-      (search-forward "base64")
-      (goto-char (match-beginning 0))
-      (should (equal (thing-at-point 'url)
-                     "https://crates.io/crates/base64"))
-      ;; Point on 'events'
-      (goto-char (point-min))
-      (search-forward "events")
-      (goto-char (match-beginning 0))
-      (should (equal (thing-at-point 'url)
-                     "https://crates.io/crates/events")))
-    (kill-buffer buf)))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\nbase64 = \"0.22\"\nevents = \"1\"\n"
+    (should (equal (toml-ts-cargo-test--url-at "base64")
+                   "https://crates.io/crates/base64"))
+    (should (equal (toml-ts-cargo-test--url-at "events")
+                   "https://crates.io/crates/events"))))
 
 (ert-deftest toml-ts-cargo-url-on-value ()
-  "Point on the version string should still resolve to the crate URL.
-The pair key base64 is found via \=`treesit-parent-until\=' from the
-value node up to the enclosing pair."
+  "URL detection works when point is on the version string."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-              "[dependencies]\nbase64 = \"0.22\"\n")))
-    (with-current-buffer buf
-      (goto-char (point-min))
-      (search-forward "0.22")
-      (goto-char (match-beginning 0))
-      (should (equal (thing-at-point 'url)
-                     "https://crates.io/crates/base64")))
-    (kill-buffer buf)))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\nbase64 = \"0.22\"\n"
+    (should (equal (toml-ts-cargo-test--url-at "0.22")
+                   "https://crates.io/crates/base64"))))
 
 (ert-deftest toml-ts-cargo-url-not-in-dependencies ()
   "Point on a key in a non-dependencies table should NOT return a URL."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-              "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\n")))
-    (with-current-buffer buf
-      (goto-char (point-min))
-      (search-forward "name")
-      (goto-char (match-beginning 0))
-      (should-not (thing-at-point 'url)))
-    (kill-buffer buf)))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\n"
+    (should-not (toml-ts-cargo-test--url-at "name"))))
 
 (ert-deftest toml-ts-cargo-url-in-dependencies-subtable ()
-  "Keys inside [dependencies.serde] should NOT return URLs for the sub-keys.
-\(Features are not crate-level dependencies.)"
+  "Keys inside [dependencies.serde] should NOT return URLs.
+Features are not crate-level dependencies."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-              "[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\n[dependencies.serde]\nfeatures = [\"derive\"]\n")))
-    (with-current-buffer buf
-      ;; The 'features' key inside [dependencies.serde] is not a crate dep
-      (goto-char (point-min))
-      (search-forward "[dependencies.serde]")
-      (search-forward "features")
-      (goto-char (match-beginning 0))
-      (should-not (thing-at-point 'url)))
-    (kill-buffer buf)))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\n[dependencies.serde]\nfeatures = [\"derive\"]\n"
+    (goto-char (point-min))
+    (search-forward "[dependencies.serde]")
+    (search-forward "features")
+    (goto-char (match-beginning 0))
+    (should-not (thing-at-point 'url))))
 
 (ert-deftest toml-ts-cargo-url-with-dotted-key ()
-  "Dotted crate keys should resolve to the first component."
+  "Dotted crate keys resolve to the first component."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-              "[dependencies]\ncrate-name.feature = true\n")))
-    (with-current-buffer buf
-      (goto-char (point-min))
-      (search-forward "crate-name")
-      (goto-char (match-beginning 0))
-      (should (equal (thing-at-point 'url)
-                     "https://crates.io/crates/crate-name")))
-    (kill-buffer buf)))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\ncrate-name.feature = true\n"
+    (should (equal (toml-ts-cargo-test--url-at "crate-name")
+                   "https://crates.io/crates/crate-name"))))
 
 (ert-deftest toml-ts-cargo-url-quoted-key ()
-  "Quoted dependency keys should work."
+  "Quoted dependency keys work."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-              "[dependencies]\n\"some-crate\" = \"1.0\"\n")))
-    (with-current-buffer buf
-      (goto-char (point-min))
-      (search-forward "some-crate")
-      (goto-char (match-beginning 0))
-      (should (equal (thing-at-point 'url)
-                     "https://crates.io/crates/some-crate")))
-    (kill-buffer buf)))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\n\"some-crate\" = \"1.0\"\n"
+    (should (equal (toml-ts-cargo-test--url-at "some-crate")
+                   "https://crates.io/crates/some-crate"))))
 
 (ert-deftest toml-ts-cargo-url-dev-dependencies ()
   "URL detection works in dev-dependencies tables."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-              "[dev-dependencies]\ntest-crate = \"0.5\"\n")))
-    (with-current-buffer buf
-      (goto-char (point-min))
-      (search-forward "test-crate")
-      (goto-char (match-beginning 0))
-      (should (equal (thing-at-point 'url)
-                     "https://crates.io/crates/test-crate")))
-    (kill-buffer buf)))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dev-dependencies]\ntest-crate = \"0.5\"\n"
+    (should (equal (toml-ts-cargo-test--url-at "test-crate")
+                   "https://crates.io/crates/test-crate"))))
+
+(ert-deftest toml-ts-cargo-url-build-dependencies ()
+  "URL detection works in build-dependencies."
+  (skip-unless (treesit-ready-p 'toml))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[build-dependencies]\ncc = \"1\"\n"
+    (should (equal (toml-ts-cargo-test--url-at "cc")
+                   "https://crates.io/crates/cc"))))
+
+;;; URL detection — workspace / target / sub-table header
+
+(ert-deftest toml-ts-cargo-url-workspace-dependencies ()
+  "URL detection works in [workspace.dependencies]."
+  (skip-unless (treesit-ready-p 'toml))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[workspace.dependencies]\nserde = \"1\"\n"
+    (should (equal (toml-ts-cargo-test--url-at "serde")
+                   "https://crates.io/crates/serde"))))
+
+(ert-deftest toml-ts-cargo-url-target-dependencies ()
+  "URL detection works in [target.'cfg(unix)'.dependencies]."
+  (skip-unless (treesit-ready-p 'toml))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n"
+    (should (equal (toml-ts-cargo-test--url-at "libc")
+                   "https://crates.io/crates/libc"))))
+
+;;; URL detection — custom template
 
 (ert-deftest toml-ts-cargo-url-custom-template ()
-  "Custom URL template should be respected."
+  "Custom URL template is respected."
   (skip-unless (treesit-ready-p 'toml))
   (let ((toml-ts-cargo-crate-url-template "https://lib.rs/%s"))
-    (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-                "[dependencies]\nbase64 = \"0.22\"\n")))
-      (with-current-buffer buf
-        (setq-local toml-ts-cargo-crate-url-template "https://lib.rs/%s")
-        (toml-ts-cargo--disable)
-        (toml-ts-cargo--enable)
-        (goto-char (point-min))
-        (search-forward "base64")
-        (goto-char (match-beginning 0))
-        (should (equal (thing-at-point 'url)
-                       "https://lib.rs/base64")))
-      (kill-buffer buf))))
+    (toml-ts-cargo-test--with-cargo-buffer
+        "[dependencies]\nbase64 = \"0.22\"\n"
+      (setq-local toml-ts-cargo-crate-url-template "https://lib.rs/%s")
+      (should (equal (toml-ts-cargo-test--url-at "base64")
+                     "https://lib.rs/base64")))))
+
+;;; Disable
 
 (ert-deftest toml-ts-cargo-mode-disable ()
-  "Disabling the mode should restore default URL detection."
+  "Disabling the mode restores default URL detection."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-              "[dependencies]\nbase64 = \"0.22\"\n")))
-    (with-current-buffer buf
-      (goto-char (point-min))
-      (search-forward "base64")
-      (goto-char (match-beginning 0))
-      (should (thing-at-point 'url))
-      ;; Disable and verify no URL detection
-      (toml-ts-cargo-mode -1)
-      (should-not (thing-at-point 'url)))
-    (kill-buffer buf)))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\nbase64 = \"0.22\"\n"
+    (should (toml-ts-cargo-test--url-at "base64"))
+    (toml-ts-cargo-mode -1)
+    (should-not (toml-ts-cargo-test--url-at "base64"))))
 
+;;; Font-lock highlighting
 
-(ert-deftest toml-ts-cargo-browse-at-point ()
-  "Pressing RET on a dependency key should call browse-url with the crates.io URL."
+(ert-deftest toml-ts-cargo-font-lock-dependency-key ()
+  "The crate-key predicate correctly identifies only toplevel dep keys."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((browse-url-called nil)
-        (browse-url-arg nil))
-    (cl-letf (((symbol-function 'browse-url)
-               (lambda (url)
-                 (setq browse-url-called t
-                       browse-url-arg url))))
-      (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-                  "[dependencies]\nbase64 = \"0.22\"\n")))
-        (with-current-buffer buf
-          (goto-char (point-min))
-          (search-forward "base64")
-          (goto-char (match-beginning 0))
-          (toml-ts-cargo-browse-at-point)
-          (should browse-url-called)
-          (should (equal browse-url-arg
-                         "https://crates.io/crates/base64")))
-        (kill-buffer buf)))))
+  (with-temp-buffer
+    (toml-ts-mode)
+    (insert "[dependencies]\nserde = \"1\"\n[package]\nname = \"x\"\n")
+    (treesit-parser-create 'toml)
+    (goto-char (point-min))
+    (search-forward "serde")
+    (goto-char (match-beginning 0))
+    (should (toml-ts-cargo--crate-key-p
+             (treesit-node-child
+              (treesit-parent-until
+               (treesit-node-at (point))
+               (lambda (n) (equal (treesit-node-type n) "pair")))
+              0 t)))
+    (goto-char (point-min))
+    (search-forward "name")
+    (goto-char (match-beginning 0))
+    (should-not (toml-ts-cargo--crate-key-p
+                 (treesit-node-child
+                  (treesit-parent-until
+                   (treesit-node-at (point))
+                   (lambda (n) (equal (treesit-node-type n) "pair")))
+                  0 t)))))
 
-(ert-deftest toml-ts-cargo-browse-at-point-no-crate ()
-  "Pressing RET on non-crate text should signal an error."
+;;; Mode hygiene
+
+(ert-deftest toml-ts-cargo-mode-idempotent ()
+  "Enabling the mode twice does not duplicate URL providers."
   (skip-unless (treesit-ready-p 'toml))
-  (let ((buf (toml-ts-cargo-test--with-cargo-buffer
-              "[package]\nname = \"my-crate\"\n")))
-    (with-current-buffer buf
-      (goto-char (point-min))
-      (search-forward "name")
-      (goto-char (match-beginning 0))
-      (should-error (toml-ts-cargo-browse-at-point)))
-    (kill-buffer buf)))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\nbase64 = \"0.22\"\n"
+    (toml-ts-cargo-mode 1)
+    (let ((count (cl-count '(url . toml-ts-cargo--url-provider)
+                           thing-at-point-provider-alist
+                           :test #'equal)))
+      (should (= count 1)))))
+
+(ert-deftest toml-ts-cargo-mode-preserves-other-providers ()
+  "Disabling the mode does not remove other thing-at-point providers."
+  (skip-unless (treesit-ready-p 'toml))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\nbase64 = \"0.22\"\n"
+    (setq-local thing-at-point-provider-alist
+                (cons '(url . my-other-provider)
+                      thing-at-point-provider-alist))
+    (toml-ts-cargo-mode -1)
+    (should (assq 'url thing-at-point-provider-alist))
+    (should (eq (cdr (assq 'url thing-at-point-provider-alist))
+                #'my-other-provider))))
+
+;;; toml-ts-cargo-maybe-enable
+
+(ert-deftest toml-ts-cargo-maybe-enable-matches ()
+  "`toml-ts-cargo-maybe-enable' activates for Cargo.toml paths."
+  (skip-unless (treesit-ready-p 'toml))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\nbase64 = \"0.22\"\n"
+    (setq buffer-file-name "/home/user/Cargo.toml")
+    (toml-ts-cargo-mode -1)
+    (toml-ts-cargo-maybe-enable)
+    (should toml-ts-cargo-mode)))
+
+(ert-deftest toml-ts-cargo-maybe-enable-no-match ()
+  "`toml-ts-cargo-maybe-enable' ignores non-Cargo files."
+  (skip-unless (treesit-ready-p 'toml))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\nbase64 = \"0.22\"\n"
+    (setq buffer-file-name "/home/user/package.toml")
+    (toml-ts-cargo-mode -1)
+    (toml-ts-cargo-maybe-enable)
+    (should-not toml-ts-cargo-mode)))
+
+(ert-deftest toml-ts-cargo-maybe-enable-nil-safe ()
+  "`toml-ts-cargo-maybe-enable' is safe with nil buffer-file-name."
+  (skip-unless (treesit-ready-p 'toml))
+  (toml-ts-cargo-test--with-cargo-buffer
+      "[dependencies]\nbase64 = \"0.22\"\n"
+    (setq buffer-file-name nil)
+    (should-not (toml-ts-cargo-maybe-enable))))
 
 (provide 'toml-ts-cargo-mode-tests)
 ;;; toml-ts-cargo-mode-tests.el ends here

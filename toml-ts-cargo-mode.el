@@ -17,33 +17,30 @@
 ;; <https://www.gnu.org/licenses/>.
 
 ;; Author: Daniel Nagy
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Keywords: languages, tools
 ;; Package-Requires: ((emacs "30.1"))
+;; URL: https://github.com/nagy/toml-ts-cargo-mode
 
 ;;; Commentary:
 
-;; This package provides `toml-ts-cargo-mode', a minor mode that adds
-;; Cargo.toml-specific enhancements to `toml-ts-mode' buffers:
+;; `toml-ts-cargo-mode' is a minor mode for `toml-ts-mode' buffers that
+;; adds Cargo.toml-specific enhancements:
 ;;
 ;;   - URL detection: `thing-at-point' for 'url returns the crates.io
-;;     page for the crate whose dependency key is under point.
+;;     URL for whichever crate dependency key is under point.
 ;;
 ;;   - Underline highlighting: dependency keys inside known dependency
-;;     tables are underlined via treesit queries with `:match?'
-;;     predicates.
+;;     tables are underlined.
 ;;
 ;; Usage:
-;;     (add-hook 'toml-ts-mode-hook
-;;               (lambda ()
-;;                 (when (string-match-p "/Cargo\\.toml\\'" buffer-file-name)
-;;                   (toml-ts-cargo-mode 1))))
+;;     (add-hook 'toml-ts-mode-hook #'toml-ts-cargo-maybe-enable)
 
 ;;; Code:
 
 (require 'toml-ts-mode)
 (require 'thingatpt)
-(eval-when-compile (require 'rx))
+(require 'cl-lib)
 
 (defgroup toml-ts-cargo nil
   "Cargo.toml support for `toml-ts-mode'."
@@ -66,19 +63,10 @@
   "Face for crate dependency keys."
   :group 'toml-ts-cargo)
 
-(defconst toml-ts-cargo--dependency-table-names
-  '("dependencies" "dev-dependencies" "build-dependencies")
-  "Cargo.toml table names that contain crate-level dependencies.")
-
-(defconst toml-ts-cargo--dependency-table-re
-  (rx-to-string `(seq bos (or ,@toml-ts-cargo--dependency-table-names) eos))
-  "Regexp matching `toml-ts-cargo--dependency-table-names'.")
-
-
-;;; Tree-sitter helpers
+;;; Predicates
 
 (defun toml-ts-cargo--strip-quotes (string)
-  "Strip surrounding double or single quotes from STRING."
+  "Strip surrounding single or double quotes from STRING."
   (if (and (> (length string) 1)
            (memq (aref string 0) '(?\" ?\'))
            (eq (aref string 0) (aref string (1- (length string)))))
@@ -86,7 +74,8 @@
     string))
 
 (defun toml-ts-cargo--key-text (key-node)
-  "Return the key text for a tree-sitter KEY-NODE."
+  "Return the full key text for tree-sitter KEY-NODE as a string.
+For dotted keys, concatenates named children with dots."
   (let ((ktype (treesit-node-type key-node)))
     (cond
      ((equal ktype "bare_key")
@@ -94,144 +83,133 @@
      ((equal ktype "quoted_key")
       (toml-ts-cargo--strip-quotes (treesit-node-text key-node)))
      ((equal ktype "dotted_key")
-      (let ((first (treesit-node-child key-node 0 t)))
-        (when first
-          (if (equal (treesit-node-type first) "quoted_key")
-              (toml-ts-cargo--strip-quotes (treesit-node-text first))
-            (treesit-node-text first)))))
+      (let ((children (treesit-node-children key-node)))
+        (mapconcat (lambda (c) (toml-ts-cargo--key-text c))
+                   (cl-remove-if-not (lambda (c) (treesit-node-check c 'named))
+                                     children)
+                   ".")))
      (t nil))))
 
-(defun toml-ts-cargo--find-table-pair (node)
-  "Walk up from NODE to find a pair whose parent is a table.
-Returns nil for pairs inside inline_tables."
-  (treesit-parent-until
-   node
-   (lambda (n)
-     (and (equal (treesit-node-type n) "pair")
-          (let ((p (treesit-node-parent n)))
-            (and p
-                 (member (treesit-node-type p)
-                         '("table" "table_array_element"))))))
-   t))
+(defun toml-ts-cargo--dep-table-header-p (header-text)
+  "Return `top' if HEADER-TEXT names a toplevel Cargo dep table.
+Return `sub' for sub-tables like [dependencies.serde].
+Return nil otherwise.
 
+A header names a dep table if any suffix component is one of
+the known dep table names.  If the last component matches, it's
+toplevel; if the second-to-last matches (and last does not), it's
+a sub-table."
+  (when (stringp header-text)
+    (let* ((dep-names '("dependencies" "dev-dependencies" "build-dependencies"))
+           (parts (split-string header-text "\\."))
+           (last (car (last parts)))
+           (n (length parts)))
+      (cond
+       ((member last dep-names) 'top)
+       ((and (>= n 2) (member (nth (- n 2) parts) dep-names)) 'sub)
+       (t nil)))))
 
-;;; Treesit font-lock rules
+(defun toml-ts-cargo--crate-key-p (key-node)
+  "Return non-nil if KEY-NODE names a crate in a toplevel Cargo dep table."
+  (let* ((pair (treesit-node-parent key-node))
+         (table (and pair
+                     (equal (treesit-node-type pair) "pair")
+                     (let ((parent (treesit-node-parent pair)))
+                       (and parent
+                            (member (treesit-node-type parent)
+                                    '("table" "table_array_element"))
+                            parent)))))
+    (when table
+      (let* ((header (treesit-node-child table 0 t))
+             (header-text (and header (toml-ts-cargo--key-text header))))
+        (eq (toml-ts-cargo--dep-table-header-p header-text) 'top)))))
+
+;;; Font-lock
+
+(defun toml-ts-cargo--fontify-crate-key (node override start end &rest _)
+  "Font-lock function: highlight NODE if it's a crate dependency key."
+  (when (toml-ts-cargo--crate-key-p node)
+    (treesit-fontify-with-override
+     start end 'toml-ts-cargo-dependency-key-face override)))
 
 (defvar toml-ts-cargo--font-lock-rules
   (treesit-font-lock-rules
    :language 'toml
    :override t
    :feature 'cargo-dependency
-   `((table
-      [(bare_key) (quoted_key)] @_table-key
-      (pair (bare_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))
-     (table
-      [(bare_key) (quoted_key)] @_table-key
-      (pair (quoted_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))
-     (table
-      [(bare_key) (quoted_key)] @_table-key
-      (pair (dotted_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))
+   '((table (pair [(bare_key) (quoted_key) (dotted_key)]
+                  @toml-ts-cargo--fontify-crate-key))
      (table_array_element
-      [(bare_key) (quoted_key)] @_table-key
-      (pair (bare_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))
-     (table_array_element
-      [(bare_key) (quoted_key)] @_table-key
-      (pair (quoted_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))
-     (table_array_element
-      [(bare_key) (quoted_key)] @_table-key
-      (pair (dotted_key) @toml-ts-cargo-dependency-key-face)
-      (:match? @_table-key ,toml-ts-cargo--dependency-table-re))))
+      (pair [(bare_key) (quoted_key) (dotted_key)]
+            @toml-ts-cargo--fontify-crate-key))))
   "Treesit font-lock rules for Cargo.toml dependency-key highlighting.")
-
 
 ;;; URL provider
 
 (defvar toml-ts-cargo-mode)
 
 (defun toml-ts-cargo--url-provider ()
-  "Return a crates.io URL if point is on a dependency key."
+  "Return a crates.io URL if point is on a Cargo dependency key."
   (when (and toml-ts-cargo-mode
              (derived-mode-p 'toml-ts-mode)
              (treesit-ready-p 'toml t))
-    (when-let* ((node (treesit-node-at (point)))
-                (pair (toml-ts-cargo--find-table-pair node))
-                (table (treesit-node-parent pair))
-                (header (treesit-node-child table 0 t))
-                ((member (treesit-node-type header)
-                         '("bare_key" "quoted_key")))
-                (header-text (toml-ts-cargo--key-text header))
-                ((member header-text toml-ts-cargo--dependency-table-names))
-                (key-node (treesit-node-child pair 0 t))
-                (crate-name (and key-node (toml-ts-cargo--key-text key-node))))
-      (format toml-ts-cargo-crate-url-template crate-name))))
-
+    (let ((node (treesit-node-at (point))))
+      (when node
+        (let* ((pair (treesit-parent-until
+                      node
+                      (lambda (n) (equal (treesit-node-type n) "pair"))))
+               (key-node (and pair (treesit-node-child pair 0 t))))
+          (when (and key-node (toml-ts-cargo--crate-key-p key-node))
+            ;; For dotted keys, use only the first component (the crate).
+            (let* ((name (toml-ts-cargo--key-text key-node))
+                   (crate (car (split-string name "\\."))))
+              (format toml-ts-cargo-crate-url-template crate))))))))
 
 ;;; Minor mode
 
-(defvar-keymap toml-ts-cargo-mode-map
-  :doc "Keymap for `toml-ts-cargo-mode'."
-  "RET" #'toml-ts-cargo-browse-at-point)
-
-(defun toml-ts-cargo-browse-at-point ()
-  "Open the crates.io URL for the crate dependency at point in a browser."
-  (interactive)
-  (if-let* ((url (thing-at-point 'url)))
-      (browse-url url)
-    (user-error "No crate URL at point")))
+;;;###autoload
+(defun toml-ts-cargo-maybe-enable ()
+  "Enable `toml-ts-cargo-mode' when visiting a Cargo.toml file.
+Safe to add to `toml-ts-mode-hook'."
+  (when (and buffer-file-name
+             (string-match-p "/Cargo\\.toml\\'" buffer-file-name))
+    (toml-ts-cargo-mode 1)))
 
 ;;;###autoload
 (define-minor-mode toml-ts-cargo-mode
   "Minor mode for Cargo.toml enhancements in `toml-ts-mode' buffers.
 
 When enabled, this mode:
-  - Underlines dependency keys in dependencies, dev-dependencies and
-    build-dependencies tables.
-  - Makes `thing-at-point' return crates.io URLs for those keys.
-  - Pressing RET on a dependency key opens it on crates.io."
+  - Underlines dependency keys in toplevel dep tables.
+  - Makes `thing-at-point' return crates.io URLs for those keys."
   :lighter " Cargo"
-  :keymap toml-ts-cargo-mode-map
   (if toml-ts-cargo-mode
       (toml-ts-cargo--enable)
     (toml-ts-cargo--disable)))
 
 (defun toml-ts-cargo--enable ()
-  "Register URL provider and treesit font-lock rules."
-  ;; URL provider
-  (setq-local thing-at-point-provider-alist
-              (cons '(url . toml-ts-cargo--url-provider)
-                    thing-at-point-provider-alist))
-  ;; Treesit font-lock rules
+  "Register URL provider and font-lock rules."
+  (unless (member '(url . toml-ts-cargo--url-provider)
+                  thing-at-point-provider-alist)
+    (setq-local thing-at-point-provider-alist
+                (cons '(url . toml-ts-cargo--url-provider)
+                      thing-at-point-provider-alist)))
   (when toml-ts-cargo-highlight-dependencies
-    (setq-local treesit-font-lock-settings
-                (append treesit-font-lock-settings
-                        toml-ts-cargo--font-lock-rules))
-    (add-to-list 'treesit-font-lock-feature-list '(cargo-dependency))
-    (treesit-font-lock-recompute-features)
-    (font-lock-flush)
-    (font-lock-ensure)))
+    (treesit-add-font-lock-rules toml-ts-cargo--font-lock-rules)
+    (font-lock-flush)))
 
 (defun toml-ts-cargo--disable ()
-  "Unregister URL provider and treesit font-lock rules."
-  ;; URL provider
+  "Unregister URL provider and font-lock rules."
   (setq-local thing-at-point-provider-alist
-              (assq-delete-all 'url thing-at-point-provider-alist))
-  ;; Treesit font-lock rules
-  (when toml-ts-cargo-highlight-dependencies
-    (let ((new-settings nil))
-      (dolist (setting treesit-font-lock-settings)
-        (unless (eq (plist-get (cdr setting) :feature) 'cargo-dependency)
-          (push setting new-settings)))
-      (setq-local treesit-font-lock-settings (nreverse new-settings)))
-    (setq-local treesit-font-lock-feature-list
-                (remove '(cargo-dependency) treesit-font-lock-feature-list))
-    (treesit-font-lock-recompute-features)
-    (font-lock-flush)
-    (font-lock-ensure)))
+              (delete '(url . toml-ts-cargo--url-provider)
+                      thing-at-point-provider-alist))
+  (let ((new-settings nil))
+    (dolist (setting treesit-font-lock-settings)
+      (unless (eq (treesit-font-lock-setting-feature setting)
+                  'cargo-dependency)
+        (push setting new-settings)))
+    (setq-local treesit-font-lock-settings (nreverse new-settings)))
+  (font-lock-flush))
 
 (provide 'toml-ts-cargo-mode)
 ;;; toml-ts-cargo-mode.el ends here

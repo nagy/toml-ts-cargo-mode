@@ -1,14 +1,13 @@
 {
   pkgs ? import <nixpkgs> { },
   lib ? pkgs.lib,
-  emacs ? pkgs.emacs,
-  emacsPackages ? emacs.pkgs,
+  emacs31 ? pkgs.emacs31,
+  emacsPackages ? emacs31.pkgs,
   melpaBuild ? emacsPackages.melpaBuild,
 }:
 
 let
-  emacsWithGrammars = emacs.pkgs.withPackages
-    (epkgs: [ epkgs.treesit-grammars.with-all-grammars ]);
+  emacsWithGrammars = emacs31.pkgs.withPackages (epkgs: [ epkgs.treesit-grammars.with-all-grammars ]);
 in
 melpaBuild (finalAttrs: {
   pname = "toml-ts-cargo-mode";
