@@ -14,7 +14,7 @@ A minor mode for `toml-ts-mode` that adds Cargo.toml-specific smarts.
 This predicate is consumed by:
 
 - **URL provider** (`toml-ts-cargo--url-provider`): registered in `thing-at-point-provider-alist`, walks from `treesit-node-at (point)` up to the containing pair's key.
-- **Font-lock** (`toml-ts-cargo--fontify-crate-key`): a function capture in tree-sitter font-lock rules, called for every `(pair (bare_key|quoted_key|dotted_key))` inside `table` and `table_array_element` nodes. Uses `treesit-fontify-with-override`.
+- **Font-lock** (`toml-ts-cargo--fontify-crate-key`): a function capture in tree-sitter font-lock rules, called for every `(pair (bare_key|quoted_key|dotted_key))` inside `table` and `table_array_element` nodes. Uses `treesit-fontify-with-override`; must pass the *node's* start/end (not the fontify-region `start`/`end` args) as the face bounds, and pass the region bounds through as `bound-start`/`bound-end` so the byte-compiler sees `start`/`end` as used (`turnCompilationWarningToError` treats unused-arg warnings as errors).
 
 ## Activation
 
@@ -35,8 +35,12 @@ This predicate is consumed by:
 - `toml-ts-cargo--strip-quotes`: strips surrounding quotes from string keys
 - `toml-ts-cargo--key-text`: recursive key text for bare_key, quoted_key, dotted_key nodes (uses named children only, skipping anonymous `.` nodes)
 
+## Regression tests
+
+- `toml-ts-cargo-fontify-only-captured-node`: calls `toml-ts-cargo--fontify-crate-key` directly with the whole buffer as region bounds and asserts only the node gets painted (guards the region-clobber bug).
+- `toml-ts-cargo-font-lock-region-bounds`: full `font-lock-ensure` pass; asserts the cargo face appears on exactly the crate keys and nothing else (incl. no `[dependencies.serde]` sub-table keys).
+
 ## TODO
 
 - [ ] `foo = { package = "bar" }` should resolve to `bar` not `foo` (renamed dependencies)
 - [ ] `[dependencies.SERDE]` headers should be underlined as crate references
-- [ ] Font-lock face assertion in batch tests is fragile; function capture with `:override t` in `treesit-add-font-lock-rules` appears to clobber non-matching keys during batch test runs. Predicate logic verified via direct `crate-key-p` test.

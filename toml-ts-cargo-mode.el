@@ -127,10 +127,13 @@ a sub-table."
 ;;; Font-lock
 
 (defun toml-ts-cargo--fontify-crate-key (node override start end &rest _)
-  "Font-lock function: highlight NODE if it's a crate dependency key."
+  "Font-lock function: highlight NODE if it's a crate dependency key.
+NODE is the tree-sitter key node.  OVERRIDE, START and END are as
+in `treesit-font-lock-rules'; START and END bound the fontify region."
   (when (toml-ts-cargo--crate-key-p node)
     (treesit-fontify-with-override
-     start end 'toml-ts-cargo-dependency-key-face override)))
+     (treesit-node-start node) (treesit-node-end node)
+     'toml-ts-cargo-dependency-key-face override start end)))
 
 (defvar toml-ts-cargo--font-lock-rules
   (treesit-font-lock-rules

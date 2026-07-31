@@ -191,6 +191,75 @@ Features are not crate-level dependencies."
                    (lambda (n) (equal (treesit-node-type n) "pair")))
                   0 t)))))
 
+(ert-deftest toml-ts-cargo-fontify-only-captured-node ()
+  "Fontify the captured node only, never the whole fontify region.
+
+Regression test: the fontify function used to pass the fontify
+region START/END to `treesit-fontify-with-override', painting
+the whole buffer whenever one dep key matched."
+  (skip-unless (treesit-ready-p 'toml))
+  (with-temp-buffer
+    (toml-ts-mode)
+    (insert "[dependencies]\nserde = \"1\"\n[package]\nname = \"x\"\n")
+    (treesit-parser-create 'toml)
+    (goto-char (point-min))
+    (search-forward "serde")
+    (goto-char (match-beginning 0))
+    (let* ((node (treesit-node-at (point)))
+           (pair (treesit-parent-until
+                  node (lambda (n) (equal (treesit-node-type n) "pair"))))
+           (key (treesit-node-child pair 0 t)))
+      ;; Simulate the font-lock engine: whole buffer as region bounds.
+      (toml-ts-cargo--fontify-crate-key key t (point-min) (point-max))
+      ;; Only the key itself should carry the cargo face.
+      (should (eq (get-text-property (treesit-node-start key) 'face)
+                   'toml-ts-cargo-dependency-key-face))
+      ;; ...and nothing outside the key's own bounds.
+      (should-not (get-text-property (1- (treesit-node-start key)) 'face))
+      (should-not (get-text-property (treesit-node-end key) 'face)))))
+
+(ert-deftest toml-ts-cargo-font-lock-region-bounds ()
+  "Full font-lock pass paints the cargo face exactly on crate keys.
+
+Integration test: catches both the whole-region clobber bug and
+keys in sub-tables (e.g. [dependencies.serde]) being underlined."
+  (skip-unless (treesit-ready-p 'toml))
+  (with-temp-buffer
+    (toml-ts-mode)
+    (insert (concat "[dependencies]\nserde = \"1\"\n"
+                    "base64 = { version = \"0.22\" }\n"
+                    "[package]\nname = \"x\"\nversion = \"0.1\"\n"
+                    "[dependencies.serde]\nfeatures = [\"derive\"]\n"))
+    (treesit-parser-create 'toml)
+    (toml-ts-cargo-mode 1)
+    (font-lock-ensure)
+    (let ((regions nil)
+          (last-face nil)
+          (last-start (point-min)))
+      ;; Collect contiguous runs of the cargo face as (start . end).
+      (goto-char (point-min))
+      (while (< (point) (point-max))
+        (let ((face (get-text-property (point) 'face)))
+          (cond
+           ((and (eq face 'toml-ts-cargo-dependency-key-face)
+                 (not (eq last-face 'toml-ts-cargo-dependency-key-face)))
+            (setq last-start (point))
+            (setq last-face face))
+           ((and (not (eq face 'toml-ts-cargo-dependency-key-face))
+                 (eq last-face 'toml-ts-cargo-dependency-key-face))
+            (push (cons last-start (point)) regions)
+            (setq last-face nil))
+           (t nil)))
+        (forward-char 1))
+      (when (eq last-face 'toml-ts-cargo-dependency-key-face)
+        (push (cons last-start (point-max)) regions))
+      (setq regions (nreverse regions))
+      ;; Exactly two cargo-face runs: "serde" and "base64".
+      (should (equal (mapcar
+                      (lambda (r) (buffer-substring (car r) (cdr r)))
+                      regions)
+                     '("serde" "base64"))))))
+
 ;;; Mode hygiene
 
 (ert-deftest toml-ts-cargo-mode-idempotent ()
