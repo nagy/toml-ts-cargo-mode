@@ -40,6 +40,15 @@ This predicate is consumed by:
 - `toml-ts-cargo-fontify-only-captured-node`: calls `toml-ts-cargo--fontify-crate-key` directly with the whole buffer as region bounds and asserts only the node gets painted (guards the region-clobber bug).
 - `toml-ts-cargo-font-lock-region-bounds`: full `font-lock-ensure` pass; asserts the cargo face appears on exactly the crate keys and nothing else (incl. no `[dependencies.serde]` sub-table keys).
 
+## Packaging
+
+`flake.nix` is the only build entry point:
+
+- `packages.toml-ts-cargo-mode` via `emacsPackages.melpaBuild`, built with an Emacs wrapped with all tree-sitter grammars (`emacsWithGrammars`) — the ERT suite needs a real `toml-ts-mode`. `default.nix`/`shell.nix` do not ship; use `nix build` / `nix develop`.
+- `version = "<header>-unstable-<date-of-last-commit>"`; keep it in sync with `;; Version:` when either changes.
+- `turnCompilationWarningToError = true`, and `checkPhase` runs the ERT suite with the same wrapped Emacs.
+- New `*.el` files must be `git add`ed: flake sources are git-tracked files only.
+
 ## TODO
 
 - [ ] `foo = { package = "bar" }` should resolve to `bar` not `foo` (renamed dependencies)
