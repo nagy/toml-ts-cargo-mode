@@ -44,7 +44,7 @@ This predicate is consumed by:
 
 `flake.nix` is the only build entry point:
 
-- `packages.toml-ts-cargo-mode` via `emacsPackages.melpaBuild`, built with an Emacs wrapped with all tree-sitter grammars (`emacsWithGrammars`) — the ERT suite needs a real `toml-ts-mode`. `default.nix`/`shell.nix` do not ship; use `nix build` / `nix develop`.
+- `packages.toml-ts-cargo-mode` via `emacsPackages.melpaBuild`, built with an Emacs wrapped with all tree-sitter grammars (`emacsWithGrammars`) — the ERT suite needs a real `toml-ts-mode`. `default.nix`/`shell.nix` do not ship; use `nix build` (dev shell via `nix develop`).
 - `version = "<header>-unstable-<date-of-last-commit>"`; keep it in sync with `;; Version:` when either changes.
 - `turnCompilationWarningToError = true`, and `checkPhase` runs the ERT suite with the same wrapped Emacs.
 - New `*.el` files must be `git add`ed: flake sources are git-tracked files only.
