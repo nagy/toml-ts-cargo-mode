@@ -7,7 +7,11 @@
   };
 
   outputs =
-    inputs@{ flake-parts, ... }:
+    inputs@{
+      self,
+      flake-parts,
+      ...
+    }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       # Pure Elisp: no ELF binaries, so evaluate on every Linux arch.
       systems = [
@@ -35,7 +39,13 @@
             pname = "toml-ts-cargo-mode";
             # Nix rejects versions Nixpkgs cannot parse. The package is
             # unreleased, so follow the house convention for that case.
-            version = "0.2.0-unstable-2026-08-10";
+            # Derive the date from the flake self-reference. Fall back to
+            # the epoch when the source is not a git checkout.
+            version =
+              let
+                d = self.lastModifiedDate or "19700101000000";
+              in
+              "0-unstable-${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}";
 
             # Only git-tracked files enter a flake build; cleanSource also
             # drops VCS dirs and byte-compiled .eln caches.
