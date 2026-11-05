@@ -1,4 +1,4 @@
-;;; toml-ts-cargo-mode.el --- Cargo.toml features for toml-ts-mode -*- lexical-binding: t -*-
+;;; toml-ts-cargo-mode.el --- Cargo.toml support  -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -96,8 +96,8 @@ Return `sub' for sub-tables like [dependencies.serde].
 Return nil otherwise.
 
 A header names a dep table if any suffix component is one of
-the known dep table names.  If the last component matches, it's
-toplevel; if the second-to-last matches (and last does not), it's
+the known dep table names.  If the last component matches, it is
+toplevel; if the second-to-last matches (and last does not), it is
 a sub-table."
   (when (stringp header-text)
     (let* ((dep-names '("dependencies" "dev-dependencies" "build-dependencies"))
@@ -127,9 +127,9 @@ a sub-table."
 ;;; Font-lock
 
 (defun toml-ts-cargo--fontify-crate-key (node override start end &rest _)
-  "Font-lock function: highlight NODE if it's a crate dependency key.
+  "Highlight NODE when NODE names a crate dependency key.
 NODE is the tree-sitter key node.  OVERRIDE, START and END are as
-in `treesit-font-lock-rules'; START and END bound the fontify region."
+in `treesit-font-lock-rules'.  START and END bound the fontify region."
   (when (toml-ts-cargo--crate-key-p node)
     (treesit-fontify-with-override
      (treesit-node-start node) (treesit-node-end node)

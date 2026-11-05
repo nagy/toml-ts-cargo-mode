@@ -1,4 +1,4 @@
-;;; toml-ts-cargo-mode-tests.el --- Tests for toml-ts-cargo-mode -*- lexical-binding: t -*-
+;;; toml-ts-cargo-mode-tests.el --- ERT tests  -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -22,6 +22,8 @@
 ;;   (require 'ert)
 ;;
 ;; Then: M-x ert RET t
+
+;;; Code:
 
 (require 'toml-ts-cargo-mode)
 (require 'ert)
@@ -274,7 +276,7 @@ keys in sub-tables (e.g. [dependencies.serde]) being underlined."
       (should (= count 1)))))
 
 (ert-deftest toml-ts-cargo-mode-preserves-other-providers ()
-  "Disabling the mode does not remove other thing-at-point providers."
+  "Disabling the mode does not remove other `thing-at-point' providers."
   (skip-unless (treesit-ready-p 'toml))
   (toml-ts-cargo-test--with-cargo-buffer
       "[dependencies]\nbase64 = \"0.22\"\n"
@@ -309,7 +311,7 @@ keys in sub-tables (e.g. [dependencies.serde]) being underlined."
     (should-not toml-ts-cargo-mode)))
 
 (ert-deftest toml-ts-cargo-maybe-enable-nil-safe ()
-  "`toml-ts-cargo-maybe-enable' is safe with nil buffer-file-name."
+  "Test `toml-ts-cargo-maybe-enable' with a nil variable `buffer-file-name'."
   (skip-unless (treesit-ready-p 'toml))
   (toml-ts-cargo-test--with-cargo-buffer
       "[dependencies]\nbase64 = \"0.22\"\n"
