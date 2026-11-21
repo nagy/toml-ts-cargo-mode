@@ -18,8 +18,7 @@ provides a `thing-at-point` URL for them. Emacs 31 or newer, because
 ## Build and test
 
 - `nix flake check` — package plus treefmt.
-- `nix build` — the package. The checkPhase runs the ERT suite with the
-  grammar-wrapped Emacs.
+- `nix build` — the package.
 - `nix develop` — dev shell. `default.nix` and `shell.nix` do not ship.
 - `nix fmt` — nixfmt through treefmt.
 
