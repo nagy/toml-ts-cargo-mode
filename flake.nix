@@ -37,6 +37,7 @@
         {
           packages.toml-ts-cargo-mode = pkgs.emacsPackages.melpaBuild (finalAttrs: {
             pname = "toml-ts-cargo-mode";
+            preferLocalBuild = true;
             # Nix rejects versions Nixpkgs cannot parse. The package is
             # unreleased, so follow the house convention for that case.
             # Derive the date from the flake self-reference. Fall back to
