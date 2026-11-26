@@ -77,8 +77,7 @@
               longDescription = ''
                 A minor mode that enhances toml-ts-mode buffers for Cargo.toml
                 files.  Dependency keys inside dependency tables are
-                underlined, thing-at-point returns their crates.io URLs, and
-                RET opens them in a browser.
+                underlined and thing-at-point returns their crates.io URLs.
               '';
               # Read from the file header, which declares AGPL-3.0-or-later.
               license = lib.licenses.agpl3Plus;
