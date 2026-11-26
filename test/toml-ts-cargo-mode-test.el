@@ -1,4 +1,4 @@
-;;; toml-ts-cargo-mode-tests.el --- ERT tests  -*- lexical-binding: t -*-
+;;; toml-ts-cargo-mode-test.el --- ERT tests  -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -18,40 +18,16 @@
 
 ;; To run these tests:
 ;;
-;;   (require 'toml-ts-cargo-mode)
+;;   (require 'toml-ts-cargo-mode-test-helper)
 ;;   (require 'ert)
 ;;
 ;; Then: M-x ert RET t
 
 ;;; Code:
 
-(require 'toml-ts-cargo-mode)
 (require 'ert)
 (require 'cl-lib)
-
-;;; Helpers
-
-(defmacro toml-ts-cargo-test--with-cargo-buffer (content &rest body)
-  "Create a temporary `toml-ts-mode' buffer with CONTENT and run BODY.
-Enables `toml-ts-cargo-mode' and cleans up afterwards."
-  (declare (indent 1))
-  `(let ((buf (generate-new-buffer " *toml-ts-cargo-test*")))
-     (with-current-buffer buf
-       (toml-ts-mode)
-       (insert ,content)
-       (goto-char (point-min))
-       (toml-ts-cargo-mode 1)
-       (setq buffer-file-name "/tmp/Cargo.toml"))
-     (unwind-protect
-         (with-current-buffer buf ,@body)
-       (kill-buffer buf))))
-
-(defun toml-ts-cargo-test--url-at (text)
-  "Return `thing-at-point' for 'url at the first occurrence of TEXT."
-  (goto-char (point-min))
-  (search-forward text)
-  (goto-char (match-beginning 0))
-  (thing-at-point 'url))
+(require 'toml-ts-cargo-mode-test-helper)
 
 ;;; URL detection — basic
 
@@ -318,5 +294,5 @@ keys in sub-tables (e.g. [dependencies.serde]) being underlined."
     (setq buffer-file-name nil)
     (should-not (toml-ts-cargo-maybe-enable))))
 
-(provide 'toml-ts-cargo-mode-tests)
-;;; toml-ts-cargo-mode-tests.el ends here
+(provide 'toml-ts-cargo-mode-test)
+;;; toml-ts-cargo-mode-test.el ends here

@@ -19,7 +19,7 @@
 ;; Author: Daniel Nagy
 ;; Version: 0.2.0
 ;; Keywords: languages, tools
-;; Package-Requires: ((emacs "30.1"))
+;; Package-Requires: ((emacs "31.1"))
 ;; URL: https://github.com/nagy/toml-ts-cargo-mode
 
 ;;; Commentary:

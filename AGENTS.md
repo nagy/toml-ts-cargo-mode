@@ -13,14 +13,17 @@ provides a `thing-at-point` URL for them. Emacs 31 or newer, because
 |---|---|
 | `toml-ts-cargo-mode.el` | The mode: predicate, URL provider, font-lock, activation. |
 | `test/toml-ts-cargo-mode-test.el` | ERT suite, regression tests for the region-clobber bug. |
-| `flake.nix` | `melpaBuild` package, grammar-wrapped Emacs, checkPhase, devShell. |
+| `test/toml-ts-cargo-mode-test-helper.el` | Shared ERT fixtures and stubs. |
+| `flake.nix` | `melpaBuild` package, grammar-wrapped Emacs, checkPhase, lint check, devShell. |
 
 ## Build and test
 
-- `nix flake check` — package plus treefmt.
+- `nix flake check` — the package (byte-compile plus the ERT suite in `checkPhase`)
+  and the `lint` check.
 - `nix build` — the package.
 - `nix develop` — dev shell. `default.nix` and `shell.nix` do not ship.
-- `nix fmt` — nixfmt through treefmt.
+- `nixfmt flake.nix` — the flake is nixfmt-formatted. No treefmt formatter ships, so
+  `nix fmt` is unavailable.
 
 ## Architecture
 
@@ -69,6 +72,16 @@ guard against double registration, and adds font-lock rules through
 never another package's entry, and removes the `cargo-dependency` settings through
 `treesit-font-lock-setting-feature`.
 
+### Tests
+
+Tests live in `test/` (singular), one file per source unit, named
+`<unit>-test.el`. Shared fixtures go in `toml-ts-cargo-mode-test-helper.el`,
+which must not match `*-test.el` so the glob loader keeps treating it as a
+helper. `checkPhase` loads `test/*-test.el` by glob, guarded by `failglob` and an
+`exit 1`, so a new test file needs no flake edit but must be `git add`ed.
+`checks.lint` runs package-lint and checkdoc over `*.el test/*.el`, with
+`package-lint-main-file` set so each test file is not linted as its own package.
+
 ## Rules
 
 - Pass the node's own start and end as the face bounds in
@@ -89,6 +102,9 @@ never another package's entry, and removes the `cargo-dependency` settings throu
   `0-unstable-YYYY-MM-DD` from the source tree date, with an epoch fallback for
   non-git sources.
 - `git add` a new `*.el` file. Flake sources are git-tracked files only.
+- Keep `Package-Requires` in step with the code. `checks.lint` fails when a
+  builtin function lands in a newer Emacs than the header declares, as
+  `treesit-font-lock-setting-feature` did for `emacs` `31.1`.
 
 ## Conventions
 
