@@ -38,15 +38,17 @@
           packages.toml-ts-cargo-mode = pkgs.emacsPackages.melpaBuild (finalAttrs: {
             pname = "toml-ts-cargo-mode";
             preferLocalBuild = true;
-            # Nix rejects versions Nixpkgs cannot parse. The package is
-            # unreleased, so follow the house convention for that case.
-            # Derive the date from the flake self-reference. Fall back to
-            # the epoch when the source is not a git checkout.
+            # Nix rejects versions Nixpkgs cannot parse. Convention for
+            # unreleased packages: <upstream-version>-unstable-<YYYY-MM-DD>,
+            # where the upstream version is the file header's `Version:` and
+            # the date is the last commit touching the source. Derive the
+            # date from the flake self-reference. Fall back to the epoch when
+            # the source is not a git checkout.
             version =
               let
                 d = self.lastModifiedDate or "19700101000000";
               in
-              "0-unstable-${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}";
+              "0.2.0-unstable-${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}";
 
             # Only git-tracked files enter a flake build; cleanSource also
             # drops VCS dirs and byte-compiled .eln caches.
